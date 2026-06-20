@@ -1,0 +1,743 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. TENANCY & SUBSCRIPTIONS
+// ==========================================
+
+model Tenant {
+  id           String        @id @default(uuid())
+  name         String
+  domain       String?       @unique
+  plan         SubscriptionPlan @default(STARTER)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  users        User[]
+  projects     Project[]
+  vendors      Vendor[]
+  materials    Material[]
+  labour       Labour[]
+  equipments   Equipment[]
+  employees    Employee[]
+  payrollRuns  PayrollRun[]
+  assets       Asset[]
+}
+
+enum SubscriptionPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+// ==========================================
+// 2. USERS & ROLES
+// ==========================================
+
+model User {
+  id           String        @id @default(uuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String        @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         TenantRole    @default(MEMBER)
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  projectMembers ProjectMember[]
+  assignedTasks  Task[]         @relation("TaskAssignee")
+  createdTasks   Task[]         @relation("TaskCreator")
+  comments       TaskComment[]
+
+  @@index([tenantId])
+}
+
+enum TenantRole {
+  OWNER         // Builder
+  GLOBAL_ADMIN
+  ACCOUNTANT
+  MEMBER        // Standard member (PM, Engineer, etc. scoped via ProjectMember)
+}
+
+enum ProjectRole {
+  PROJECT_MANAGER
+  SITE_ENGINEER
+  CONTRACTOR
+  ARCHITECT
+  INTERIOR_DESIGNER
+  CLIENT
+  VENDOR_REPRESENTATIVE
+}
+
+model ProjectMember {
+  id        String      @id @default(uuid())
+  projectId String
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ProjectRole
+  createdAt DateTime    @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@index([projectId])
+}
+
+// ==========================================
+// 3. PROJECTS, MILESTONES & TASKS
+// ==========================================
+
+model Project {
+  id          String        @id @default(uuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  startDate   DateTime
+  endDate     DateTime?
+  budget      Decimal       @db.Decimal(15, 2)
+  status      ProjectStatus @default(PLANNING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  members      ProjectMember[]
+  milestones   Milestone[]
+  tasks        Task[]
+  siteReports  SiteReport[]
+  documents    Document[]
+  budgets      Budget[]
+  expenses     Expense[]
+  boqItems     BOQItem[]
+  employees    Employee[]
+
+  @@index([tenantId])
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  DELAYED
+  COMPLETED
+  ARCHIVED
+}
+
+model Milestone {
+  id          String    @id @default(uuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  dueDate     DateTime
+  progress    Int       @default(0) // 0 to 100
+  tasks       Task[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId])
+}
+
+model Task {
+  id          String      @id @default(uuid())
+  projectId   String
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId String?
+  milestone   Milestone?  @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  title       String
+  description String?
+  status      TaskStatus  @default(PENDING)
+  priority    Priority    @default(MEDIUM)
+  dueDate     DateTime?
+  
+  createdById String
+  creator     User        @relation("TaskCreator", fields: [createdById], references: [id])
+  assigneeId  String?
+  assignee    User?       @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  comments    TaskComment[]
+  attachments Attachment[]
+
+  @@index([projectId])
+  @@index([assigneeId])
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DELAYED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model Attachment {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fileUrl   String
+  fileName  String
+  fileSize  Int
+  mimeType  String
+  uploadedAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+// ==========================================
+// 4. DAILY SITE REPORTS
+// ==========================================
+
+model SiteReport {
+  id             String        @id @default(uuid())
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportDate     DateTime
+  workCompleted  String        @db.Text
+  labourCount    Int
+  weather        String?
+  remarks        String?       @db.Text
+  submittedById  String
+  createdAt      DateTime      @default(now())
+  
+  photos         ReportPhoto[]
+
+  @@index([projectId])
+}
+
+model ReportPhoto {
+  id           String     @id @default(uuid())
+  siteReportId String
+  siteReport   SiteReport @relation(fields: [siteReportId], references: [id], onDelete: Cascade)
+  photoUrl     String
+  caption      String?
+  uploadedAt   DateTime   @default(now())
+
+  @@index([siteReportId])
+}
+
+// ==========================================
+// 5. MATERIALS & INVENTORY
+// ==========================================
+
+model Material {
+  id           String                 @id @default(uuid())
+  tenantId     String
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String                 // Cement, Steel, Bricks, Sand, etc.
+  unit         String                 // bags, tons, units, brass, sqft
+  currentStock Decimal                @db.Decimal(12, 2) @default(0.00)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  transactions MaterialTransaction[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model MaterialTransaction {
+  id          String          @id @default(uuid())
+  materialId  String
+  material    Material        @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  projectId   String?
+  type        TransactionType // PURCHASED, USED, WASTAGE, RETURNED
+  quantity    Decimal         @db.Decimal(12, 2)
+  costPerUnit Decimal?        @db.Decimal(10, 2)
+  remarks     String?
+  createdAt   DateTime        @default(now())
+
+  @@index([materialId])
+  @@index([projectId])
+}
+
+enum TransactionType {
+  PURCHASED
+  USED
+  WASTAGE
+  RETURNED
+}
+
+// ==========================================
+// 6. VENDORS & PROCUREMENT
+// ==========================================
+
+model Vendor {
+  id             String          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  contactName    String?
+  email          String?
+  phone          String?
+  address        String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  purchaseOrders PurchaseOrder[]
+
+  @@index([tenantId])
+}
+
+model PurchaseOrder {
+  id          String      @id @default(uuid())
+  vendorId    String
+  vendor      Vendor      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  poNumber    String      @unique
+  orderDate   DateTime
+  totalAmount Decimal     @db.Decimal(15, 2)
+  status      POStatus    @default(DRAFT)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([vendorId])
+}
+
+enum POStatus {
+  DRAFT
+  SENT
+  DELIVERED
+  CANCELLED
+}
+
+// ==========================================
+// 7. LABOUR MANAGEMENT
+// ==========================================
+
+model Labour {
+  id           String             @id @default(uuid())
+  tenantId     String
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  trade        LabourTrade
+  dailyWage    Decimal            @db.Decimal(10, 2)
+  phone        String?
+  isActive     Boolean            @default(true)
+  attendance   LabourAttendance[]
+
+  @@index([tenantId])
+}
+
+enum LabourTrade {
+  MASON
+  CARPENTER
+  ELECTRICIAN
+  PAINTER
+  WELDER
+  HELPER
+}
+
+model LabourAttendance {
+  id         String           @id @default(uuid())
+  labourId   String
+  labour     Labour           @relation(fields: [labourId], references: [id], onDelete: Cascade)
+  projectId  String
+  date       DateTime
+  status     AttendanceStatus
+  hoursWorked Decimal         @db.Decimal(4, 2) @default(8.0)
+  overtimeHrs Decimal         @db.Decimal(4, 2) @default(0.0)
+  createdAt  DateTime         @default(now())
+
+  @@unique([labourId, date])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+}
+
+// ==========================================
+// 8. DOCUMENTS, BUDGETS & FINANCE
+// ==========================================
+
+model Document {
+  id          String       @id @default(uuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String
+  fileUrl     String
+  fileType    DocType
+  uploadedById String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([projectId])
+}
+
+enum DocType {
+  BLUEPRINT
+  BOQ
+  CONTRACT
+  INVOICE
+  APPROVAL
+  OTHER
+}
+
+model Budget {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category    String   // Material, Labour, Equipment, Permits, Subcontracting
+  allocated   Decimal  @db.Decimal(15, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, category])
+  @@index([projectId])
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category    String
+  amount      Decimal  @db.Decimal(15, 2)
+  date        DateTime
+  description String?
+  receiptUrl  String?
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// ==========================================
+// 9. BOQ (BILL OF QUANTITIES)
+// ==========================================
+
+model BOQItem {
+  id           String        @id @default(uuid())
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category     String        // Earthwork, Concrete, Masonry, Finishing
+  description  String
+  unit         String        // cum, sqm, tons
+  plannedQty   Decimal       @db.Decimal(12, 2)
+  actualQty    Decimal       @db.Decimal(12, 2) @default(0.00)
+  plannedRate  Decimal       @db.Decimal(10, 2)
+  actualRate   Decimal       @db.Decimal(10, 2) @default(0.00)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([projectId])
+}
+
+// ==========================================
+// 10. EQUIPMENT TRACKING
+// ==========================================
+
+model Equipment {
+  id           String              @id @default(uuid())
+  tenantId     String
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String              // Excavator, Tower Crane, Concrete Mixer
+  modelNumber  String?
+  status       EquipmentStatus     @default(AVAILABLE)
+  location     String?             // Assigned Site location
+  lastServiced DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  logs         EquipmentLog[]
+
+  @@index([tenantId])
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  BROKEN
+}
+
+model EquipmentLog {
+  id          String    @id @default(uuid())
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  status      String
+  remarks     String?
+  loggedAt    DateTime  @default(now())
+
+  @@index([equipmentId])
+}
+
+// ==========================================
+// 11. APPROVAL WORKFLOW ENGINE
+// ==========================================
+
+model ApprovalRequest {
+  id            String         @id @default(uuid())
+  tenantId      String
+  projectId     String?
+  title         String         // "PO-2026-004 Approval", "Invoice #283 Signoff"
+  targetType    ApprovalTarget // PURCHASE_ORDER, INVOICE, DRAWING, MATERIAL_REQUEST
+  targetId      String         // ID of the target record
+  status        ApprovalStatus @default(SUBMITTED)
+  submittedById String
+  reviewedById  String?
+  remarks       String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([tenantId])
+}
+
+enum ApprovalTarget {
+  PURCHASE_ORDER
+  INVOICE
+  DRAWING
+  MATERIAL_REQUEST
+}
+
+enum ApprovalStatus {
+  DRAFT
+  SUBMITTED
+  REVIEWED
+  APPROVED
+  REJECTED
+}
+
+// ==========================================
+// 12. AUDIT LOGS
+// ==========================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  tenantId    String
+  userId      String
+  action      String   // CREATE, UPDATE, DELETE, APPROVE
+  entityName  String   // Project, Task, Invoice, etc.
+  entityId    String
+  oldValue    String?  @db.Text
+  newValue    String?  @db.Text
+  timestamp   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ==========================================
+// 13. HRMS & EMPLOYEE MANAGEMENT
+// ==========================================
+
+model Employee {
+  id            String              @id @default(uuid())
+  tenantId      String
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employeeId    String              @unique // e.g. "EMP-2026-001"
+  name          String
+  email         String              @unique
+  mobile        String?
+  department    Department
+  designation   String
+  assignedProjId String?
+  project       Project?            @relation(fields: [assignedProjId], references: [id], onDelete: SetNull)
+  salaryBasic   Decimal             @db.Decimal(12, 2)
+  allowanceHRA  Decimal             @db.Decimal(10, 2) @default(0.00)
+  allowanceMisc Decimal             @db.Decimal(10, 2) @default(0.00)
+  joiningDate   DateTime            @default(now())
+  status        EmployeeStatus      @default(ACTIVE)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  attendance    EmployeeAttendance[]
+  leaves        EmployeeLeave[]
+  payslips      Payslip[]
+  assets        AssetAssignment[]
+
+  @@index([tenantId])
+}
+
+enum Department {
+  ENGINEERING
+  HR
+  ACCOUNTS
+  PROCUREMENT
+  OPERATIONS
+  ADMIN
+  SAFETY
+  QUALITY
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+  ON_LEAVE
+}
+
+// ==========================================
+// 14. GEO-FENCED ATTENDANCE
+// ==========================================
+
+model EmployeeAttendance {
+  id           String           @id @default(uuid())
+  employeeId   String
+  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date         DateTime
+  checkIn      DateTime
+  checkOut     DateTime?
+  checkInLat   Float
+  checkInLng   Float
+  status       AttendanceType   @default(PRESENT)
+  distanceMtrs Float?           // Distance from site center during check-in
+  selfieUrl    String?          // Selfie attachment
+  isFraudFlag  Boolean          @default(false)
+  fraudRemarks String?
+  createdAt    DateTime         @default(now())
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+}
+
+enum AttendanceType {
+  PRESENT
+  ABSENT
+  LATE_ENTRY
+  HALF_DAY
+  REMOTE_WORK
+  LEAVE
+}
+
+model EmployeeLeave {
+  id           String       @id @default(uuid())
+  employeeId   String
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  startDate    DateTime
+  endDate      DateTime
+  type         LeaveType
+  status       LeaveStatus  @default(PENDING)
+  reason       String?
+  reviewedById String?
+  createdAt    DateTime     @default(now())
+
+  @@index([employeeId])
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  MATERNITY
+  SABBATICAL
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ==========================================
+// 15. PAYROLL CALCULATIONS
+// ==========================================
+
+model PayrollRun {
+  id             String             @id @default(uuid())
+  tenantId       String
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  month          String             // e.g. "2026-06"
+  totalPayroll   Decimal            @db.Decimal(15, 2)
+  distributedAmt Decimal            @db.Decimal(15, 2) @default(0.00)
+  status         PayrollStatus      @default(PENDING)
+  createdAt      DateTime           @default(now())
+  payslips       Payslip[]
+
+  @@unique([tenantId, month])
+}
+
+enum PayrollStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+model Payslip {
+  id           String     @id @default(uuid())
+  payrollRunId String
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee   @relation(fields: [employeeId], references: [id])
+  basicPaid    Decimal    @db.Decimal(12, 2)
+  hraPaid      Decimal    @db.Decimal(10, 2)
+  bonusPaid    Decimal    @db.Decimal(10, 2) @default(0.00)
+  deductPF     Decimal    @db.Decimal(10, 2) @default(0.00)
+  deductESIC   Decimal    @db.Decimal(10, 2) @default(0.00)
+  netPaid      Decimal    @db.Decimal(12, 2)
+  payslipUrl   String?    // PDF path link
+  createdAt    DateTime   @default(now())
+
+  @@index([employeeId])
+}
+
+// ==========================================
+// 16. ASSET MANAGEMENT & QR CODE CODES
+// ==========================================
+
+model Asset {
+  id           String            @id @default(uuid())
+  tenantId     String
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assetId      String            @unique // e.g. "AST-EXC-002"
+  name         String            // Excavator, Concrete Mixer, Laptop
+  category     AssetCategory
+  purchaseDate DateTime
+  value        Decimal           @db.Decimal(12, 2)
+  qrCodeUrl    String?           // Generated QR path
+  status       AssetStatus       @default(AVAILABLE)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  assignments  AssetAssignment[]
+
+  @@index([tenantId])
+}
+
+enum AssetCategory {
+  MACHINERY
+  VEHICLE
+  SAFETY_GEAR
+  ELECTRONIC
+  OTHER
+}
+
+enum AssetStatus {
+  AVAILABLE
+  ASSIGNED
+  MAINTENANCE
+  LOST
+  DISPOSED
+}
+
+model AssetAssignment {
+  id          String    @id @default(uuid())
+  assetId     String
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  assignedAt  DateTime  @default(now())
+  returnedAt  DateTime?
+  remarks     String?
+
+  @@index([assetId])
+  @@index([employeeId])
+}
